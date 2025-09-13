@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import io
-import random
+import json
+import zipfile
 from typing import Dict, List
 
-from flask import Blueprint, jsonify, render_template, request, send_file
+from flask import Blueprint, jsonify, render_template, request, send_file, send_from_directory, current_app
 from werkzeug.exceptions import BadRequest
 
 from .gabor import generate_gabor_png
-from .utils import clamp, fint, ffloat
+from .utils import clamp, fint, ffloat, generate_round_params
 
 
 bp = Blueprint("main", __name__)
@@ -54,66 +55,102 @@ def api_gabor():
 @bp.get("/api/round")
 def api_round():
     """
-    1ラウンド分の16枚パラメータを返す。
-    うち2枚は完全一致（answer_idxのタプルで示す）。
-    難易度は 'easy' | 'normal' | 'hard' （デフォルト normal）。
+    画像フォルダ(images)からランダムに15枚＋同一画像を1枚複製して全16枚を返す。
+    戻り値はファイル名配列と正解ペアのインデックス。
+    """
+    # List available PNGs in images directory
+    images_dir = current_app.config.get("IMAGES_DIR")
+    if not images_dir:
+        return jsonify({"ok": False, "error": "IMAGES_DIR not configured"}), 500
+
+    import os, random
+
+    try:
+        files = [f for f in os.listdir(images_dir) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
+    except FileNotFoundError:
+        return jsonify({"ok": False, "error": "images directory not found"}), 500
+
+    # Need at least 15 distinct images
+    if len(files) < 15:
+        return jsonify({"ok": False, "error": "not enough images (>=15 required)"}), 400
+
+    # Pick 15 unique, then duplicate one of them
+    picks = random.sample(files, 15)
+    dup = random.choice(picks)
+    grid = picks + [dup]
+    random.shuffle(grid)
+
+    # Find the two positions of the duplicated filename
+    idxs = [i for i, n in enumerate(grid) if n == dup]
+    # In rare case shuffle makes only one occurrence (shouldn't happen), fallback recompute
+    if len(idxs) != 2:
+        # recompute robustly
+        counts = {}
+        for i, n in enumerate(grid):
+            counts.setdefault(n, []).append(i)
+        pair = next((v for v in counts.values() if len(v) == 2), None)
+        if not pair:
+            return jsonify({"ok": False, "error": "pair detection failed"}), 500
+        answer = (pair[0], pair[1])
+    else:
+        answer = (idxs[0], idxs[1])
+
+    return jsonify({"ok": True, "images": grid, "answer": answer})
+
+
+@bp.get("/api/round_zip")
+def api_round_zip():
+    """16枚のガボール画像をZIPでダウンロードする。
+
+    クエリ: difficulty, size
+    同梱: meta.json（params と answer を格納）
     """
     difficulty = request.args.get("difficulty", "normal")
     size = clamp(fint(request.args.get("size", 128), 128), 64, 256)
+    params_list, answer = generate_round_params(difficulty, size)
 
-    # ベース（正解ペア）のパラメータ
-    base = {
-        "size": size,
-        "freq": round(random.uniform(4.0, 10.0), 2),
-        "theta": round(random.uniform(0.0, 180.0), 1),
-        "phase": round(random.uniform(0.0, 360.0), 1),
-        "sigma": round(random.uniform(0.18, 0.30), 3),
-        "gamma": round(random.uniform(0.8, 1.2), 2),
-        "contrast": round(random.uniform(0.8, 1.0), 2),
-        "bg": 127,
-        "mode": "cos",
-        "normalize": 1,
-    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        # 画像
+        for i, p in enumerate(params_list):
+            png = generate_gabor_png(
+                size=p["size"],
+                cycles=p["freq"],
+                theta_deg=p["theta"],
+                phase_deg=p["phase"],
+                sigma_ratio=p["sigma"],
+                gamma=p["gamma"],
+                contrast=p["contrast"],
+                bg_level=p["bg"],
+                use_sine=(p["mode"].lower() == "sin"),
+                normalize=bool(p["normalize"]),
+            )
+            zf.writestr(f"img_{i:02d}.png", png)
 
-    # 難易度ごとの「紛らわしさ」（差の小ささ）
-    if difficulty == "easy":
-        jitter = {"theta": 25, "freq": 2.0, "phase": 90, "sigma": 0.05, "gamma": 0.25}
-    elif difficulty == "hard":
-        jitter = {"theta": 8, "freq": 0.6, "phase": 25, "sigma": 0.015, "gamma": 0.07}
-    else:  # normal
-        jitter = {"theta": 15, "freq": 1.2, "phase": 45, "sigma": 0.03, "gamma": 0.12}
+        # メタ情報
+        meta = {"params": params_list, "answer": answer}
+        zf.writestr("meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
 
-    # 16位置のうち正解2枚の位置をランダムに選択
-    idxs = list(range(16))
-    random.shuffle(idxs)
-    answer = (idxs[0], idxs[1])
-
-    # 16枚分のパラメータを作る
-    params_list: List[Dict] = []
-    for i in range(16):
-        if i in answer:
-            params_list.append(base.copy())
-        else:
-            # base に微妙な差をつける
-            def jv(name, base_val, span, is_angle=False):
-                v = base_val + random.uniform(-span, span)
-                if is_angle:
-                    v = v % 360.0
-                return v
-
-            p = base.copy()
-            p["theta"] = round(jv("theta", base["theta"], jitter["theta"], is_angle=False), 1)
-            p["freq"] = round(clamp(jv("freq", base["freq"], jitter["freq"]), 0.2, 32.0), 2)
-            p["phase"] = round(jv("phase", base["phase"], jitter["phase"], is_angle=True), 1)
-            p["sigma"] = round(clamp(jv("sigma", base["sigma"], jitter["sigma"]), 0.02, 0.9), 3)
-            p["gamma"] = round(clamp(jv("gamma", base["gamma"], jitter["gamma"]), 0.1, 3.0), 2)
-            params_list.append(p)
-
-    return jsonify(
-        {
-            "ok": True,
-            "params": params_list,
-            "answer": answer,  # [i, j] 形式
-        }
+    buf.seek(0)
+    return send_file(
+        buf,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name="gabor_round.zip",
     )
 
+
+@bp.get("/img/<path:name>")
+def serve_image(name: str):
+    """Serve a pre-generated image by filename from images directory.
+
+    Only allows files within the configured images directory.
+    """
+    images_dir = current_app.config.get("IMAGES_DIR")
+    if not images_dir:
+        raise BadRequest("IMAGES_DIR not configured")
+    # Basic extension allowlist
+    lower = name.lower()
+    if not (lower.endswith(".png") or lower.endswith(".jpg") or lower.endswith(".jpeg")):
+        raise BadRequest("unsupported file type")
+    return send_from_directory(images_dir, name)

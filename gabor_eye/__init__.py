@@ -20,5 +20,6 @@ def create_app() -> Flask:
     from .routes import bp as routes_bp
 
     app.register_blueprint(routes_bp)
+    # Path to pre-generated images directory
+    app.config["IMAGES_DIR"] = str(base_dir / "images")
     return app
-

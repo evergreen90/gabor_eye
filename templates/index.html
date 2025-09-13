@@ -125,19 +125,19 @@
             const res = await fetch(`/api/round?difficulty=${diff}&size=${size}`);
             const json = await res.json();
             if (!json.ok) { alert("ラウンド生成に失敗"); return; }
-            paramsList = json.params;
+            const images = json.images; // 16 filenames (one pair duplicated)
             answerPair = json.answer;
 
             // グリッド描画
             grid.innerHTML = "";
             for (let i = 0; i < 16; i++) {
-                const p = paramsList[i];
-                const url = `/api/gabor?size=${p.size}&freq=${p.freq}&theta=${p.theta}&phase=${p.phase}&sigma=${p.sigma}&gamma=${p.gamma}&contrast=${p.contrast}&bg=${p.bg}&mode=${p.mode}&normalize=${p.normalize}`;
+                const fname = images[i];
+                const url = `/img/${encodeURIComponent(fname)}`;
                 const cell = document.createElement("button");
                 cell.className = "cell";
                 cell.dataset.idx = String(i);
                 const img = new Image();
-                img.src = url + "&_t=" + Date.now();
+                img.src = url + "?_t=" + Date.now();
                 img.alt = "gabor";
                 cell.appendChild(img);
                 cell.addEventListener("click", onPick);
