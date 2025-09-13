@@ -152,6 +152,10 @@ button[disabled] {
     outline: 3px solid var(--ok);
 }
 
+.target img {
+    outline: 3px solid var(--ok);
+}
+
 .note summary {
     cursor: pointer;
     color: var(--muted);

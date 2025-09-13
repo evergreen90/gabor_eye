@@ -44,10 +44,16 @@
                 <button id="restartBtn" disabled>リスタート</button>
             </div>
 
+            <div class="target" style="margin-top: 8px;">
+                <div style="color: var(--muted); font-size: 13px; margin-bottom: 6px;">問題（お手本）</div>
+                <img id="targetImg" alt="target" style="width: 100%; max-width: 240px; background: var(--tile); border: 1px solid var(--border); border-radius: 10px; padding: 6px;" />
+                <div style="color: var(--muted); font-size: 12px; margin-top: 6px;">この画像と同じ画像を盤面から1枚選んでください。</div>
+            </div>
+
             <details class="note">
                 <summary>使い方 / 注意</summary>
                 <ul>
-                    <li>2枚連続で同じ画像を選べたら正解、次のラウンドへ。</li>
+                    <li>表示されたお手本と同じ画像を1枚選ぶと正解、次のラウンドへ。</li>
                     <li>3分で何問解けるか競います。ベストスコアは端末に保存。</li>
                     <li>本アプリは研究・学習用デモです。効果には個人差があります。体調が悪い場合は中止してください。参考：平松 類 先生の解説や「3分で同じ模様を見つける」形式の紹介。<span
                             class="refs">（資料）</span></li>
@@ -71,11 +77,13 @@
     <script>
         const $ = (s) => document.querySelector(s);
         const grid = $("#grid");
+        const targetImg = $("#targetImg");
         let timeLeft = 180, timer = null;
         let score = 0, miss = 0;
         let firstPick = null, lock = true;
-        let answerPair = null;    // [i, j]
-        let paramsList = [];      // 16枚のパラメータ
+        let answerPair = null;    // unused in single-select mode
+        let roundImages = [];     // 16枚のファイル名
+        let targetName = null;    // 問題画像
         let playing = false;
 
         function setText(id, v) { document.getElementById(id).textContent = v; }
@@ -125,13 +133,17 @@
             const res = await fetch(`/api/round?difficulty=${diff}&size=${size}`);
             const json = await res.json();
             if (!json.ok) { alert("ラウンド生成に失敗"); return; }
-            const images = json.images; // 16 filenames (one pair duplicated)
-            answerPair = json.answer;
+            roundImages = json.images; // 16 unique filenames
+            targetName = json.target;  // filename that appears once in grid
+
+            if (targetImg) {
+                targetImg.src = `/img/${encodeURIComponent(targetName)}?_t=` + Date.now();
+            }
 
             // グリッド描画
             grid.innerHTML = "";
             for (let i = 0; i < 16; i++) {
-                const fname = images[i];
+                const fname = roundImages[i];
                 const url = `/img/${encodeURIComponent(fname)}`;
                 const cell = document.createElement("button");
                 cell.className = "cell";
@@ -152,32 +164,23 @@
             const cell = e.currentTarget;
 
             cell.classList.add("picked");
-            if (firstPick === null) {
-                firstPick = idx;
-            } else {
-                lock = true;
-                // 判定
-                const ok = isAnswer(firstPick, idx);
-                setTimeout(() => {
-                    const firstEl = document.querySelector(`.cell[data-idx="${firstPick}"]`);
-                    if (ok) {
-                        score += 1; setText("score", score);
-                        firstEl.classList.add("correct"); cell.classList.add("correct");
-                        setTimeout(() => { nextRound(); }, 250);
-                    } else {
-                        miss += 1; setText("miss", miss);
-                        firstEl.classList.remove("picked"); cell.classList.remove("picked");
-                    }
-                    firstPick = null; lock = false;
-                }, 150);
-            }
+            lock = true;
+            // 単一選択: クリックした1枚が target と同じなら正解
+            const ok = (roundImages[idx] === targetName);
+            setTimeout(() => {
+                if (ok) {
+                    score += 1; setText("score", score);
+                    cell.classList.add("correct");
+                } else {
+                    miss += 1; setText("miss", miss);
+                    cell.classList.remove("picked");
+                }
+                // 成否に関わらず次のラウンドへ
+                setTimeout(() => { nextRound(); }, 250);
+                firstPick = null; lock = false;
+            }, 120);
         }
 
-        function isAnswer(a, b) {
-            if (a === b) return false;
-            const [i, j] = answerPair;
-            return (a === i && b === j) || (a === j && b === i);
-        }
 
         window.addEventListener("DOMContentLoaded", () => {
             setText("best", localStorage.getItem("gabor_best") || "0");

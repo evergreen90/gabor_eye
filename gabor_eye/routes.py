@@ -55,10 +55,10 @@ def api_gabor():
 @bp.get("/api/round")
 def api_round():
     """
-    画像フォルダ(images)からランダムに15枚＋同一画像を1枚複製して全16枚を返す。
-    戻り値はファイル名配列と正解ペアのインデックス。
+    画像フォルダ(images)からランダムに16枚（重複なし）を返し、
+    その中の1枚を「問題（お手本）」として示す方式。
+    戻り値: images(16ファイル名), target(お手本ファイル名), answer_idx(お手本の盤面位置)
     """
-    # List available PNGs in images directory
     images_dir = current_app.config.get("IMAGES_DIR")
     if not images_dir:
         return jsonify({"ok": False, "error": "IMAGES_DIR not configured"}), 500
@@ -70,32 +70,16 @@ def api_round():
     except FileNotFoundError:
         return jsonify({"ok": False, "error": "images directory not found"}), 500
 
-    # Need at least 15 distinct images
-    if len(files) < 15:
-        return jsonify({"ok": False, "error": "not enough images (>=15 required)"}), 400
+    # Need at least 16 distinct images
+    if len(files) < 16:
+        return jsonify({"ok": False, "error": "not enough images (>=16 required)"}), 400
 
-    # Pick 15 unique, then duplicate one of them
-    picks = random.sample(files, 15)
-    dup = random.choice(picks)
-    grid = picks + [dup]
+    grid = random.sample(files, 16)  # unique 16
     random.shuffle(grid)
+    target = random.choice(grid)
+    answer_idx = grid.index(target)
 
-    # Find the two positions of the duplicated filename
-    idxs = [i for i, n in enumerate(grid) if n == dup]
-    # In rare case shuffle makes only one occurrence (shouldn't happen), fallback recompute
-    if len(idxs) != 2:
-        # recompute robustly
-        counts = {}
-        for i, n in enumerate(grid):
-            counts.setdefault(n, []).append(i)
-        pair = next((v for v in counts.values() if len(v) == 2), None)
-        if not pair:
-            return jsonify({"ok": False, "error": "pair detection failed"}), 500
-        answer = (pair[0], pair[1])
-    else:
-        answer = (idxs[0], idxs[1])
-
-    return jsonify({"ok": True, "images": grid, "answer": answer})
+    return jsonify({"ok": True, "images": grid, "target": target, "answer_idx": answer_idx})
 
 
 @bp.get("/api/round_zip")
