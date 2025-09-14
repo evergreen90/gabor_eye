@@ -3,3 +3,5 @@ Flask>=3.0.3,<4.0.0
 numpy>=2.1.2,<3.0.0
 # Pillow 11+ provides Python 3.13 support
 Pillow>=11.0.0,<12.0.0
+# WSGI server for deployment
+gunicorn>=22,<23
