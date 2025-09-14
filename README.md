@@ -1,44 +1,22 @@
 # Gabor Eye 3分チャレンジ（Flask版）
 
-4×4=16枚から同一のガボールパッチを探す 3 分チャレンジ。
+4×4=16枚の中から「お手本」と同じ画像を1枚選ぶ 3分チャレンジ。出題は `images/` に置いた画像から毎ラウンド再抽選・再配置します。
 
-## 構成（リファクタ後）
+## 構成
 - `gabor_eye/`: Flask アプリ本体
-  - `__init__.py`: `create_app()` ファクトリ
-  - `routes.py`: 画面ルートと API (`/api/gabor`, `/api/round`)
-  - `gabor.py`: ガボール生成ロジック
-  - `utils.py`: ヘルパー（型安全なパースや clamp など）
-- `templates/`, `static/`: UI 一式
+  - `__init__.py`: `create_app()` ファクトリ（`IMAGES_DIR` に `<repo>/images` を設定）
+  - `routes.py`: 画面ルートと API
+    - メイン: `/api/round`（16枚＋お手本のJSON）, `/img/<name>`（画像配信）
+    - 補助: `/api/gabor`（動的ガボール生成・学習用）, `/api/round_zip`（生成画像ZIP・検証用）
+  - `gabor.py`: ガボール生成ロジック（補助用）
+  - `utils.py`: ヘルパー
+- `templates/`, `static/`: UI 一式（お手本画像は緑枠表示）
+- `images/`: 出題に使用する画像（`.png/.jpg/.jpeg`、16枚以上）
 - `app.py`: ローカル実行エントリ
 
-## 必要環境
-- Python 3.13.5（pyenv の場合: `.python-version` 参照）
 
-## セットアップ
-```bash
-# 推奨: pyenv 等で 3.13.5 を有効化
-# macOS 例: pyenv install 3.13.5 && pyenv local 3.13.5
-
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-
-python app.py
-# ブラウザ: http://localhost:8000
-```
-
-### トラブルシューティング
-- `.venv` が別バージョン（3.12 など）で作られている場合は作り直してください。
-  ```bash
-  rm -rf .venv
-  pyenv local 3.13.5  # 必要に応じて
-  python -m venv .venv && source .venv/bin/activate
-  pip install -r requirements.txt
-  ```
-
-### Python 3.13 対応メモ
-- 依存パッケージを Python 3.13 対応版に更新しました。
-  - `numpy>=2.1.2,<3`
-  - `Pillow>=11,<12`
-  - `Flask>=3,<4`
-  既存の仮想環境でエラーが出る場合は、上記の手順で環境を作り直してください。
+## ゲーム仕様（現在）
+- 各ラウンドで `images/` からユニークな16枚を抽出・シャッフル
+- その中の1枚を「お手本」としてパネルに表示（緑枠）
+- 盤面の中からお手本と同じ画像を1枚選ぶと正解（スコア+1）。不一致はミス+1
+- 正誤に関わらず短い遅延後に次ラウンドへ（毎回16枚を再取得・再配置）
